@@ -1198,14 +1198,15 @@ def test_asset_backfill_cancellation():
 
     assert len(instance.get_runs()) == 1
 
-    instance_queryer = _get_instance_queryer(instance, asset_graph, backfill_start_datetime)
-
     canceling_backfill_data = None
     for canceling_backfill_data in get_canceling_asset_backfill_iteration_data(
         backfill_id,
         asset_backfill_data,
-        instance_queryer,
-        asset_graph,
+        _get_asset_graph_view(
+            instance,
+            asset_graph,
+            backfill_start_datetime,
+        ),
         backfill_start_datetime.timestamp(),
     ):
         pass
@@ -1283,14 +1284,11 @@ def test_asset_backfill_cancels_without_fetching_downstreams_of_failed_partition
         in asset_backfill_data.failed_and_downstream_subset
     )
 
-    instance_queryer = _get_instance_queryer(instance, asset_graph, backfill_start_datetime)
-
     canceling_backfill_data = None
     for canceling_backfill_data in get_canceling_asset_backfill_iteration_data(
         backfill_id,
         asset_backfill_data,
-        instance_queryer,
-        asset_graph,
+        _get_asset_graph_view(instance, asset_graph, backfill_start_datetime),
         backfill_start_datetime.timestamp(),
     ):
         pass
@@ -1516,8 +1514,8 @@ def test_connected_assets_disconnected_partitions():
         ],
     )
 
-    target_root_partitions = asset_backfill_data.get_target_root_asset_partitions(instance_queryer)
-    assert set(target_root_partitions) == {
+    target_root_subset = asset_backfill_data.get_target_root_asset_graph_subset(instance_queryer)
+    assert set(target_root_subset.iterate_asset_partitions()) == {
         AssetKeyPartitionKey(asset_key=AssetKey(["foo"]), partition_key="2023-10-05"),
         AssetKeyPartitionKey(asset_key=AssetKey(["foo"]), partition_key="2023-10-03"),
         AssetKeyPartitionKey(asset_key=AssetKey(["foo"]), partition_key="2023-10-04"),
