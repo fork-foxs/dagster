@@ -1257,6 +1257,7 @@ def get_canceling_asset_backfill_iteration_data(
             " AssetGraphSubset object"
         )
 
+    # TODO: Make this use subsets throughout instead of a sequence of AssetKeyPartitionKeys
     failed_subset = AssetGraphSubset.from_asset_partition_set(
         set(
             _get_failed_asset_partitions(
@@ -1352,17 +1353,13 @@ def _get_subset_in_target_subset(
 
     candidate_entity_subset = next(iter(candidate_entity_subsets))
 
-    passed_entity_subset = candidate_entity_subset.compute_intersection(
-        check.not_none(
-            asset_graph_view.get_subset_from_serializable_subset(
-                target_subset.get_asset_subset(
-                    candidate_entity_subset.key, asset_graph_view.asset_graph
-                )
-            )
+    subset_in_target_subset: EntitySubset[AssetKey] = candidate_entity_subset.compute_intersection(
+        asset_graph_view.get_entity_subset_from_asset_graph_subset(
+            target_subset, candidate_entity_subset.key
         )
     )
 
-    return AssetGraphSubset.from_entity_subsets([passed_entity_subset])
+    return AssetGraphSubset.from_entity_subsets([subset_in_target_subset])
 
 
 def _get_failed_and_downstream_asset_partitions(
@@ -1397,7 +1394,7 @@ def _get_failed_and_downstream_asset_partitions(
                 excluded_asset_graph_subsets_and_reasons=[],
             )
         ),
-        initial_asset_subset=failed_asset_graph_subset,
+        initial_asset_graph_subset=failed_asset_graph_subset,
         include_full_execution_set=False,
     )[0]
 
@@ -1539,7 +1536,7 @@ def execute_asset_backfill_iteration_inner(
 
         yield None
 
-    initial_asset_subset = AssetGraphSubset.from_asset_partition_set(
+    initial_asset_graph_subset = AssetGraphSubset.from_asset_partition_set(
         initial_candidates, asset_graph
     )
 
@@ -1555,7 +1552,7 @@ def execute_asset_backfill_iteration_inner(
             target_subset=asset_backfill_data.target_subset,
             failed_and_downstream_subset=failed_and_downstream_subset,
         ),
-        initial_asset_subset=initial_asset_subset,
+        initial_asset_graph_subset=initial_asset_graph_subset,
         include_full_execution_set=True,
     )
 
@@ -1630,12 +1627,8 @@ def _should_backfill_atomic_asset_subset_unit(
     asset_graph = asset_graph_view.asset_graph
     asset_key = entity_subset_to_filter.key
 
-    passed_entity_subset = entity_subset_to_filter
-
-    missing_in_target_partitions = passed_entity_subset.compute_difference(
-        check.not_none(
-            asset_graph_view.get_asset_subset_from_asset_graph_subset(target_subset, asset_key)
-        )
+    missing_in_target_partitions = entity_subset_to_filter.compute_difference(
+        asset_graph_view.get_entity_subset_from_asset_graph_subset(target_subset, asset_key)
     )
     if not missing_in_target_partitions.is_empty:
         failure_subsets_with_reasons.append(
@@ -1644,13 +1637,13 @@ def _should_backfill_atomic_asset_subset_unit(
                 f"{missing_in_target_partitions} not targeted by backfill",
             )
         )
-        passed_entity_subset = passed_entity_subset.compute_difference(missing_in_target_partitions)
+        entity_subset_to_filter = entity_subset_to_filter.compute_difference(
+            missing_in_target_partitions
+        )
 
-    failed_and_downstream_partitions = passed_entity_subset.compute_intersection(
-        check.not_none(
-            asset_graph_view.get_asset_subset_from_asset_graph_subset(
-                failed_and_downstream_subset, asset_key
-            )
+    failed_and_downstream_partitions = entity_subset_to_filter.compute_intersection(
+        asset_graph_view.get_entity_subset_from_asset_graph_subset(
+            failed_and_downstream_subset, asset_key
         )
     )
     if not failed_and_downstream_partitions.is_empty:
@@ -1660,16 +1653,12 @@ def _should_backfill_atomic_asset_subset_unit(
                 f"{failed_and_downstream_partitions} has failed or is downstream of a failed asset",
             )
         )
-        passed_entity_subset = passed_entity_subset.compute_difference(
+        entity_subset_to_filter = entity_subset_to_filter.compute_difference(
             failed_and_downstream_partitions
         )
 
-    materialized_partitions = passed_entity_subset.compute_intersection(
-        check.not_none(
-            asset_graph_view.get_asset_subset_from_asset_graph_subset(
-                materialized_subset, asset_key
-            )
-        )
+    materialized_partitions = entity_subset_to_filter.compute_intersection(
+        asset_graph_view.get_entity_subset_from_asset_graph_subset(materialized_subset, asset_key)
     )
     if not materialized_partitions.is_empty:
         failure_subsets_with_reasons.append(
@@ -1678,15 +1667,13 @@ def _should_backfill_atomic_asset_subset_unit(
                 f"{materialized_partitions} already materialized by backfill",
             )
         )
-        passed_entity_subset = passed_entity_subset.compute_difference(materialized_partitions)
-
-    requested_partitions = passed_entity_subset.compute_intersection(
-        check.not_none(
-            asset_graph_view.get_asset_subset_from_asset_graph_subset(requested_subset, asset_key)
+        entity_subset_to_filter = entity_subset_to_filter.compute_difference(
+            materialized_partitions
         )
-    )
 
-    # NEED TO INCORPORATE THE FIXES FROM https://github.com/dagster-io/dagster/pull/26419 HERE
+    requested_partitions = entity_subset_to_filter.compute_intersection(
+        asset_graph_view.get_entity_subset_from_asset_graph_subset(requested_subset, asset_key)
+    )
 
     if not requested_partitions.is_empty:
         failure_subsets_with_reasons.append(
@@ -1695,22 +1682,22 @@ def _should_backfill_atomic_asset_subset_unit(
                 f"{requested_partitions} already requested by backfill",
             )
         )
-        passed_entity_subset = passed_entity_subset.compute_difference(requested_partitions)
+        entity_subset_to_filter = entity_subset_to_filter.compute_difference(requested_partitions)
 
     for parent_key in asset_graph.get(asset_key).parent_keys:
-        if passed_entity_subset.is_empty:
+        if entity_subset_to_filter.is_empty:
             break
 
         parent_subset, required_but_nonexistent_subset = (
             asset_graph_view.compute_parent_subset_and_required_but_nonexistent_subset(
                 parent_key,
-                passed_entity_subset,
+                entity_subset_to_filter,
             )
         )
 
         if not required_but_nonexistent_subset.is_empty:
             raise DagsterInvariantViolationError(
-                f"Asset partition subset {passed_entity_subset}"
+                f"Asset partition subset {entity_subset_to_filter}"
                 f" depends on invalid partitions {required_but_nonexistent_subset}"
             )
 
@@ -1718,17 +1705,13 @@ def _should_backfill_atomic_asset_subset_unit(
         # to be filtered out if the parent has not run yet
         targeted_but_not_materialized_parent_subset: EntitySubset[AssetKey] = (
             parent_subset.compute_intersection(
-                check.not_none(
-                    asset_graph_view.get_asset_subset_from_asset_graph_subset(
-                        target_subset, parent_key
-                    )
+                asset_graph_view.get_entity_subset_from_asset_graph_subset(
+                    target_subset, parent_key
                 )
             )
         ).compute_difference(
-            check.not_none(
-                asset_graph_view.get_asset_subset_from_asset_graph_subset(
-                    materialized_subset, parent_key
-                )
+            asset_graph_view.get_entity_subset_from_asset_graph_subset(
+                materialized_subset, parent_key
             )
         )
 
@@ -1736,9 +1719,9 @@ def _should_backfill_atomic_asset_subset_unit(
             asset_graph_view.compute_child_subset(
                 asset_key, targeted_but_not_materialized_parent_subset
             )
-        ).compute_intersection(passed_entity_subset)
+        ).compute_intersection(entity_subset_to_filter)
 
-        not_waiting_for_parent_subset = passed_entity_subset.compute_difference(
+        not_waiting_for_parent_subset = entity_subset_to_filter.compute_difference(
             possibly_waiting_for_parent_subset
         )
 
@@ -1756,12 +1739,12 @@ def _should_backfill_atomic_asset_subset_unit(
             if parent_failure_subsets_with_reasons:
                 failure_subsets_with_reasons.extend(parent_failure_subsets_with_reasons)
 
-            passed_entity_subset = not_waiting_for_parent_subset.compute_union(
+            entity_subset_to_filter = not_waiting_for_parent_subset.compute_union(
                 can_run_with_parent_subset
             )
 
     return (
-        passed_entity_subset.convert_to_serializable_subset(),
+        entity_subset_to_filter.convert_to_serializable_subset(),
         failure_subsets_with_reasons,
     )
 
@@ -1776,8 +1759,6 @@ def get_can_run_with_parent_subsets(
 ) -> Tuple[EntitySubset[AssetKey], Iterable[Tuple[EntitySubsetValue, str]]]:
     candidate_asset_key = entity_subset_to_filter.key
     parent_asset_key = parent_subset.key
-
-    passed_entity_subset = entity_subset_to_filter
 
     assert isinstance(asset_graph_view.asset_graph, RemoteWorkspaceAssetGraph)
     asset_graph: RemoteWorkspaceAssetGraph = asset_graph_view.asset_graph
@@ -1810,7 +1791,7 @@ def get_can_run_with_parent_subsets(
             asset_graph_view.get_empty_subset(key=candidate_asset_key),
             [
                 (
-                    passed_entity_subset.get_internal_value(),
+                    entity_subset_to_filter.get_internal_value(),
                     f"parent {parent_node.key.to_user_string()} and {candidate_node.key.to_user_string()} have different backfill policies so they cannot be materialized in the same run. {candidate_node.key.to_user_string()} can be materialized once {parent_node.key} is materialized.",
                 )
             ],
@@ -1823,7 +1804,7 @@ def get_can_run_with_parent_subsets(
             asset_graph_view.get_empty_subset(key=candidate_asset_key),
             [
                 (
-                    passed_entity_subset.get_internal_value(),
+                    entity_subset_to_filter.get_internal_value(),
                     f"parent {parent_node.key.to_user_string()} and {candidate_node.key.to_user_string()} are in different code locations so they cannot be materialized in the same run. {candidate_node.key.to_user_string()} can be materialized once {parent_node.key.to_user_string()} is materialized.",
                 )
             ],
@@ -1834,7 +1815,7 @@ def get_can_run_with_parent_subsets(
             asset_graph_view.get_empty_subset(key=candidate_asset_key),
             [
                 (
-                    passed_entity_subset.get_internal_value(),
+                    entity_subset_to_filter.get_internal_value(),
                     f"parent {parent_node.key.to_user_string()} and {candidate_node.key.to_user_string()} have different partitions definitions so they cannot be materialized in the same run. {candidate_node.key.to_user_string()} can be materialized once {parent_node.key.to_user_string()} is materialized.",
                 )
             ],
@@ -1843,13 +1824,13 @@ def get_can_run_with_parent_subsets(
     parent_target_subset = target_subset.get_asset_subset(parent_asset_key, asset_graph)
     candidate_target_subset = target_subset.get_asset_subset(candidate_asset_key, asset_graph)
 
-    parent_already_requested_subset = check.not_none(
-        asset_graph_view.get_asset_subset_from_asset_graph_subset(
+    parent_being_requested_this_tick_subset = (
+        asset_graph_view.get_entity_subset_from_asset_graph_subset(
             asset_graph_subset_matched_so_far, parent_asset_key
         )
     )
 
-    num_requested_parents = parent_already_requested_subset.size
+    num_parent_partitions_being_requested_this_tick = parent_being_requested_this_tick_subset.size
 
     is_self_dependency = parent_asset_key == candidate_asset_key
 
@@ -1868,10 +1849,14 @@ def get_can_run_with_parent_subsets(
                 # there is no limit on the size of a single run or...
                 parent_node.backfill_policy.max_partitions_per_run is None
                 # a single run can materialize all requested parent partitions
-                or parent_node.backfill_policy.max_partitions_per_run > num_requested_parents
+                or parent_node.backfill_policy.max_partitions_per_run
+                > num_parent_partitions_being_requested_this_tick
             )
             # all targeted parents are being requested this tick, or its a self depdendancy
-            and (num_requested_parents == parent_target_subset.size or is_self_dependency)
+            and (
+                num_parent_partitions_being_requested_this_tick == parent_target_subset.size
+                or is_self_dependency
+            )
         )
     ):
         failed_reason = (
@@ -1885,45 +1870,43 @@ def get_can_run_with_parent_subsets(
             asset_graph_view.get_empty_subset(key=candidate_asset_key),
             [
                 (
-                    passed_entity_subset.get_internal_value(),
+                    entity_subset_to_filter.get_internal_value(),
                     failed_reason,
                 )
             ],
         )
 
     # We now know that the parent and child are eligible to happen in the same run, so pass
-    # any children of parents that actually were requested in this iteration (by
+    # any children of parents that actually are being requested in this iteration (by
     # being in either the asset_graph_subset_matched_so_far subset, or more rarely in
     # candidate_asset_graph_subset_unit if they are part of a non-subsettable multi-asset)
     failure_subsets_with_reasons = []
 
-    candidate_subset = check.not_none(
-        asset_graph_view.get_asset_subset_from_asset_graph_subset(
-            candidate_asset_graph_subset_unit, parent_asset_key
-        )
+    candidate_subset = asset_graph_view.get_entity_subset_from_asset_graph_subset(
+        candidate_asset_graph_subset_unit, parent_asset_key
     )
 
     not_yet_requested_parent_subset = parent_subset.compute_difference(
-        parent_already_requested_subset.compute_union(candidate_subset)
+        parent_being_requested_this_tick_subset.compute_union(candidate_subset)
     )
 
     children_of_not_yet_requested_parents = asset_graph_view.compute_child_subset(
         candidate_asset_key, not_yet_requested_parent_subset
-    ).compute_intersection(passed_entity_subset)
+    ).compute_intersection(entity_subset_to_filter)
 
     if not children_of_not_yet_requested_parents.is_empty:
         failure_subsets_with_reasons.append(
             (
-                children_of_not_yet_requested_parents.convert_to_serializable_subset().value,
+                children_of_not_yet_requested_parents.get_internal_value(),
                 f"Parent subset {not_yet_requested_parent_subset} is not requested in this iteration",
             )
         )
-        passed_entity_subset = passed_entity_subset.compute_difference(
+        entity_subset_to_filter = entity_subset_to_filter.compute_difference(
             children_of_not_yet_requested_parents
         )
 
     return (
-        passed_entity_subset,
+        entity_subset_to_filter,
         failure_subsets_with_reasons,
     )
 
@@ -1957,17 +1940,17 @@ def _should_backfill_atomic_asset_graph_subset_unit(
             candidate_asset_key,
             passed_subset_value,
         )
-        passed_entity_subset = check.not_none(
+        entity_subset_to_filter = check.not_none(
             asset_graph_view.get_subset_from_serializable_subset(passed_serializable_entity_subset)
         )
 
-        if passed_entity_subset.is_empty:
+        if entity_subset_to_filter.is_empty:
             break
 
-        passed_entity_subset, new_failure_subset_values_with_reasons = (
+        entity_subset_to_filter, new_failure_subset_values_with_reasons = (
             _should_backfill_atomic_asset_subset_unit(
                 asset_graph_view,
-                entity_subset_to_filter=passed_entity_subset,
+                entity_subset_to_filter=entity_subset_to_filter,
                 candidate_asset_graph_subset_unit=candidate_asset_graph_subset_unit,
                 asset_graph_subset_matched_so_far=asset_graph_subset_matched_so_far,
                 target_subset=target_subset,
@@ -1976,7 +1959,7 @@ def _should_backfill_atomic_asset_graph_subset_unit(
                 failed_and_downstream_subset=failed_and_downstream_subset,
             )
         )
-        passed_subset_value = passed_entity_subset.value
+        passed_subset_value = entity_subset_to_filter.value
         failure_subset_values_with_reasons.extend(new_failure_subset_values_with_reasons)
 
     passed_entity_subsets = []

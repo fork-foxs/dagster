@@ -25,14 +25,14 @@ def bfs_filter_asset_graph_view(
         ["AssetGraphSubset", "AssetGraphSubset"],
         AssetGraphViewBfsFilterConditionResult,
     ],
-    initial_asset_subset: "AssetGraphSubset",
+    initial_asset_graph_subset: "AssetGraphSubset",
     include_full_execution_set: bool,
 ) -> Tuple[AssetGraphSubset, Sequence[Tuple[AssetGraphSubset, str]]]:
     """Returns the subset of the graph that satisfy supplied criteria.
 
-    - Are >= initial_asset_subset
+    - Are >= initial_asset_graph_subset
     - Match the condition_fn
-    - Any of their ancestors >= initial_asset_subset match the condition_fn
+    - Any of their ancestors >= initial_asset_graph_subset match the condition_fn
 
     Also returns a list of tuples, where each tuple is an asset subset that did not
     satisfy the condition and the reason they were filtered out.
@@ -51,14 +51,14 @@ def bfs_filter_asset_graph_view(
 
     Visits parents before children.
     """
-    initial_subsets = list(asset_graph_view.iterate_asset_subsets(initial_asset_subset))
+    initial_subsets = list(asset_graph_view.iterate_asset_subsets(initial_asset_graph_subset))
 
     # invariant: we never consider an asset partition before considering its ancestors
     queue = ToposortedPriorityQueue(
         asset_graph_view, initial_subsets, include_full_execution_set=include_full_execution_set
     )
 
-    visited_graph_subset = initial_asset_subset
+    visited_graph_subset = initial_asset_graph_subset
 
     result: AssetGraphSubset = AssetGraphSubset.empty()
     failed_reasons: Sequence[Tuple[AssetGraphSubset, str]] = []
@@ -83,10 +83,8 @@ def bfs_filter_asset_graph_view(
                     child_key, matching_entity_subset
                 )
                 unvisited_child_subset = child_subset.compute_difference(
-                    check.not_none(
-                        asset_graph_view.get_asset_subset_from_asset_graph_subset(
-                            visited_graph_subset, child_key
-                        )
+                    asset_graph_view.get_entity_subset_from_asset_graph_subset(
+                        visited_graph_subset, child_key
                     )
                 )
                 if not unvisited_child_subset.is_empty:

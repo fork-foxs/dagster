@@ -195,11 +195,23 @@ class AssetGraphView(LoadingContext):
         value = partitions_def.empty_subset() if partitions_def else False
         return EntitySubset(self, key=key, value=_ValidatedEntitySubsetValue(value))
 
-    def get_asset_subset_from_asset_graph_subset(
-        self, asset_graph_subset: AssetGraphSubset, asset_key: AssetKey
-    ) -> Optional[EntitySubset[AssetKey]]:
-        return self.get_subset_from_serializable_subset(
-            asset_graph_subset.get_asset_subset(asset_key, self.asset_graph)
+    def get_entity_subset_from_asset_graph_subset(
+        self, asset_graph_subset: AssetGraphSubset, key: AssetKey
+    ) -> EntitySubset[AssetKey]:
+        check.invariant(
+            self.asset_graph.has(key), f"Asset graph does not contain {key.to_user_string()}"
+        )
+
+        serializable_subset = asset_graph_subset.get_asset_subset(key, self.asset_graph)
+        check.invariant(
+            serializable_subset.is_compatible_with_partitions_def(
+                self._get_partitions_def(key),
+            ),
+            f"Partitions definition for {key.to_user_string()} is not compatible with the passed in AssetGraphSubset",
+        )
+
+        return EntitySubset(
+            self, key=key, value=_ValidatedEntitySubsetValue(serializable_subset.value)
         )
 
     def iterate_asset_subsets(
@@ -208,12 +220,8 @@ class AssetGraphView(LoadingContext):
         """Returns an Iterable of EntitySubsets representing the subset of each asset that this
         AssetGraphSubset contains.
         """
-        for serializable_entity_subset in asset_graph_subset.iterate_asset_subsets(
-            self.asset_graph
-        ):
-            yield check.not_none(
-                self.get_subset_from_serializable_subset(serializable_entity_subset)
-            )
+        for asset_key in asset_graph_subset.asset_keys:
+            yield self.get_entity_subset_from_asset_graph_subset(asset_graph_subset, asset_key)
 
     def get_subset_from_serializable_subset(
         self, serializable_subset: SerializableEntitySubset[T_EntityKey]
