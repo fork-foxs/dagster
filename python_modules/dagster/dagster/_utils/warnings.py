@@ -40,7 +40,7 @@ def preview_warning(
 # ########################
 
 
-class BetaWarning(FutureWarning):
+class BetaWarning(Warning):
     pass
 
 
