@@ -61,6 +61,18 @@
                     "default": null,
                     "title": "Defaultazurecredential"
                 },
+                "accessKeyOrSasToken": {
+                    "anyOf": [
+                        {
+                            "type": "string"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ],
+                    "default": null,
+                    "title": "Accesskeyorsastoken"
+                },
                 "localDir": {
                     "anyOf": [
                         {
