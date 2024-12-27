@@ -117,7 +117,7 @@ def create_and_launch_partition_backfill(
         asset_selection or backfill_params.get("selector") or backfill_params.get("partitionNames")
     ) and partitions_by_assets:
         raise DagsterInvariantViolationError(
-            "partitions_by_assets cannot be used together with asset_selection, selector, or"
+            "partitionsByAssets cannot be used together with assetSelection, selector, or"
             " partitionNames"
         )
 
@@ -231,10 +231,10 @@ def create_and_launch_partition_backfill(
         )
 
         backfill = PartitionBackfill.from_asset_partitions(
-            asset_graph=asset_graph,
             backfill_id=backfill_id,
-            tags=tags,
+            asset_graph=asset_graph,
             backfill_timestamp=backfill_timestamp,
+            tags=tags,
             asset_selection=asset_selection,
             partition_names=backfill_params.get("partitionNames"),
             dynamic_partitions_store=dynamic_partitions_store,
