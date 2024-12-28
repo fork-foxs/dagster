@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, List, Sequence, Union, cast
 
 import dagster._check as check
 from dagster._core.definitions.selector import PartitionsByAssetSelector, RepositorySelector
-from dagster._core.definitions.utils import is_valid_title_and_reason
+from dagster._core.definitions.utils import check_valid_title
 from dagster._core.errors import (
     DagsterError,
     DagsterInvariantViolationError,
@@ -128,6 +128,8 @@ def create_and_launch_partition_backfill(
 
     tags = {**tags, **graphene_info.context.get_viewer_tags()}
 
+    title = check_valid_title(backfill_params.get("title"))
+
     if backfill_params.get("selector") is not None:  # job backfill
         partition_set_selector = backfill_params["selector"]
         partition_set_name = partition_set_selector.get("partitionSetName")
@@ -172,10 +174,6 @@ def create_and_launch_partition_backfill(
                 "arguments"
             )
 
-        is_valid_title, reason = is_valid_title_and_reason(backfill_params.get("title"))
-        if not is_valid_title:
-            raise DagsterInvariantViolationError(reason)
-
         backfill = PartitionBackfill(
             backfill_id=backfill_id,
             partition_set_origin=remote_partition_set.get_remote_origin(),
@@ -186,7 +184,7 @@ def create_and_launch_partition_backfill(
             tags=tags,
             backfill_timestamp=backfill_timestamp,
             asset_selection=asset_selection,
-            title=backfill_params.get("title"),
+            title=title,
             description=backfill_params.get("description"),
         )
         assert_valid_job_partition_backfill(
@@ -242,7 +240,7 @@ def create_and_launch_partition_backfill(
             partition_names=backfill_params.get("partitionNames"),
             dynamic_partitions_store=dynamic_partitions_store,
             all_partitions=backfill_params.get("allPartitions", False),
-            title=backfill_params.get("title"),
+            title=title,
             description=backfill_params.get("description"),
         )
         assert_valid_asset_partition_backfill(
@@ -279,7 +277,7 @@ def create_and_launch_partition_backfill(
             tags=tags,
             dynamic_partitions_store=dynamic_partitions_store,
             partitions_by_assets=partitions_by_assets,
-            title=backfill_params.get("title"),
+            title=title,
             description=backfill_params.get("description"),
         )
         assert_valid_asset_partition_backfill(
